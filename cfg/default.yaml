@@ -1,0 +1,107 @@
+# Reconstructed trees are written as <output_dir>/<side>/<capture>/<capture>_merged.ply
+# (with a <capture>_merged.frames.txt manifest alongside).
+dataset_dir: /workspace/data/pears/pears_filtered_clean
+output_dir: /workspace/data/pears/pears_reconstructed
+
+
+# tree_reconstruciton.py -- only for one frame
+frame_dir: /workspace/data/pears/pears_filtered_clean/A/tree_0_V_0000/marker_captures/depth
+# 3D marker model
+model_path: /workspace/data/marker_model/helios2DepthMarker.ply
+model_units_to_m: 0.001            # mm -> m
+
+
+# frames marker_detection_sam3.py sweeps when run standalone (end exclusive)
+frames:
+  start: 0
+  end: 11
+
+# Visualization toggles (each blocks until you close its window):
+#   visualize_sam3           -- per-frame SAM 3 marker-detection overlays
+#   visualize_isolation      -- how the target tree is isolated: clusters + camera
+#                               aim, kept tree vs dropped fused neighbor, and the
+#                               along-row density used for the split
+#   visualize_reconstruction -- the merged Open3D 3D reconstruction window
+visualize_sam3: false
+visualize_isolation: false
+visualize_reconstruction: false
+
+# reconstruct_pears.py -- batch driver. Walks dataset_dir (above) and
+# reconstructs every capture found under it.
+overwrite: true                   # redo captures whose .ply already exists (else skip them)
+
+# marker_detection_sam3.py -- SAM 3 prompting / acceptance
+sam3:
+  multimask: true
+  min_prompt_cover: 0.30             # refined mask must cover >= this of its region
+  max_area_ratio: 5.0                # reject refined masks > this x the region area
+  max_regions_per_frame: 40          # cap SAM 3 calls per frame
+  save_step_images: false            # save each numbered marker-detection panel as a PNG
+  step_images_dir: /workspace/data/marker_detection_steps
+
+# tree_reconstruction.py -- pairwise ICP + pose-graph optimization
+pose_graph:
+  icp_voxel: 0.01                    # ICP downsample resolution (m); radii/distances scale from this
+  icp_max_iter: 50
+  icp_tukey_k_m: 0.0075              # Tukey kernel width for the fine ICP pass (m); 0 = plain least squares
+  pair_neighbor_span: 3              # add edges between frames with |i-j| <= this
+  edge_min_fitness: 0.30             # drop pairwise constraints below this fitness
+  edge_max_rmse_m: 0.02              # ...or above this inlier RMSE
+  prune_threshold: 0.25              # optimizer's own edge-confidence prune
+
+# tree_reconstruction.py -- isolate the target tree from neighboring trees.
+# The captured scene can hold several trees in a row; the target is the one the
+# CAMERAS were aimed at (the marker is a shared scene reference and may sit at a
+# neighbor's base, so its distance is a poor selector). The merged cloud is split
+# into connected components (DBSCAN, cluster_eps_m); among the substantial ones
+# (>= min_cluster_frac of the largest, which drops the marker's own small cluster
+# and specks) the target is the one the cameras point most directly at -- the
+# smallest mean angle between each camera's optical axis and the direction to the
+# cluster centroid. Neighboring trees, off to the side of the views, are dropped.
+# Runs before the visibility/support filter, so the main output and
+# *_prefilter.ply already contain a single tree; the full multi-tree scene is
+# saved once as *_scene.ply (only when isolation removed something) for
+# before/after comparison.
+tree_isolation:
+  enabled: true
+  cluster_eps_m: 0.05                # DBSCAN neighbor distance (m); trees separated by more than this fall into different clusters
+  cluster_min_points: 50             # minimum points for a DBSCAN cluster (smaller groups are treated as noise)
+  min_cluster_frac: 0.1              # ignore clusters smaller than this fraction of the largest when choosing the target (drops the marker cluster/specks)
+  # When a neighbor tree touches the target (branches/trellis) they share one
+  # cluster; split it along the row at the density valley between their trunks and
+  # keep the camera-aimed side. A lone tree is unimodal, so it is never cut.
+  split_fused_trees: true
+  split_gap_frac: 0.4                # a density valley is a between-tree gap only if it dips below this * the smaller neighbouring peak
+  split_min_lobe_frac: 0.15          # require both the kept tree and the dropped part to exceed this fraction of the cluster, else treat it as one tree
+
+# tree_reconstruction.py -- multi-view support filter on the merged cloud.
+# A point is kept only if >= min_frames distinct frames put a point within
+# radius_m of it (its own frame counts, so 2 = "one other frame agrees").
+# Disabled by default in favor of visibility_filter below, which keeps a real
+# branch that only one view captured instead of dropping it for lack of support.
+support_filter:
+  enabled: false
+  radius_m: 0.0075                   # support ball; > registration error, < branch motion
+  min_frames: 2                      # distinct frames required inside the ball
+
+# tree_reconstruction.py -- visibility (free-space) filter on the merged cloud.
+# Uses the known per-frame camera poses + depth maps. Two tallies per point:
+#   confirmations  -- cameras that positively observed a surface there (have a
+#                     point within confirm_radius_m of it, in 3D);
+#   contradictions -- cameras that saw straight PAST it into free space (it sits
+#                     > tol_m in front of the surface they observed on that ray).
+# A point is KEPT iff confirmed by >= min_confirmations cameras OR contradicted by
+# < min_contradictions cameras. So a branch >= min_confirmations views actually
+# captured is never dropped, however many other views missed it and looked through
+# to the background; only points too few views confirm AND enough views see
+# through (ghosts of swayed branches, floating speckle) are removed. Takes
+# precedence over support_filter when both are enabled; the unfiltered merge is
+# written next to the output as *_prefilter.ply so before/after can be compared.
+visibility_filter:
+  enabled: true
+  tol_m: 0.01                        # free-space margin; point must be > this in front of the observed surface to count (m)
+  min_contradictions: 3              # distinct cameras that must see through a point before it is eligible for removal
+  min_confirmations: 2               # cameras that must positively observe a point to keep it regardless of contradictions
+  confirm_radius_m: 0.0075           # 3D ball for counting confirming cameras (m); >= registration error
+  pixel_margin: 2                    # use nearest observed depth in this +/- px window (silhouette / thin-branch guard); 0 = exact pixel
+  min_depth_m: 0.05                  # ignore points closer than this to a camera (degenerate projection) (m)
