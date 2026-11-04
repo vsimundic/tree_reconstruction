@@ -23,8 +23,8 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-import config
-import viz_utils as vz
+import marker_based_reconstruction.src.config as config
+import marker_based_reconstruction.src.viz_utils as vz
 
 # ===========================================================================
 # CONFIG

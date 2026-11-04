@@ -21,7 +21,7 @@ import numpy as np
 import yaml
 from scipy.ndimage import distance_transform_edt
 
-import viz_utils as vz
+import marker_based_reconstruction.src.viz_utils as vz
 
 # ===========================================================================
 # CONFIG

@@ -26,11 +26,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-import depth_regions as dr
-import marker_detection_sam3 as baseline
-import marker_registration as reg
-import sam3_client
-import viz_utils as vz
+import marker_based_reconstruction.src.depth_regions as dr
+import marker_based_reconstruction.src.marker_detection_sam3 as baseline
+import marker_based_reconstruction.src.marker_registration as reg
+import marker_based_reconstruction.src.sam3_client as sam3_client
+import marker_based_reconstruction.src.viz_utils as vz
 
 
 # ---------------------------------------------------------------------------

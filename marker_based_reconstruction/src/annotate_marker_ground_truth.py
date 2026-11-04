@@ -2,13 +2,17 @@
 """Click marker centers in intensity/depth frames and save them as ground truth."""
 
 import os
+import sys
 from pathlib import Path
+
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2
 import numpy as np
 import yaml
 
-import config
+import marker_based_reconstruction.src.config as config
 
 
 WINDOW_NAME = "Marker ground-truth annotation"

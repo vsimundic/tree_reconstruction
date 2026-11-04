@@ -5,9 +5,16 @@ batch continues. All settings come from cfg/default.yaml (see config.py).
 
 import glob
 import os
+import sys
+from pathlib import Path
 
-import config
-import tree_reconstruction as tr
+# Support execution by file path. Without this, src/marker_based_reconstruction.py
+# shadows the top-level marker_based_reconstruction package.
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import marker_based_reconstruction.src.config as config
+import marker_based_reconstruction.src.marker_based_reconstruction as tr
 
 
 def is_frame_dir(path):

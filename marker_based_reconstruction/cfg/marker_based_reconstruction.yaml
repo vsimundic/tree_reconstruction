@@ -1,0 +1,100 @@
+# Input and output paths
+dataset_dir: /data/pears/pears_original              # Root searched by reconstruct_dataset.py.
+output_dir: /data/pears/pears_marker_reconstruction  # Results: <side>/<capture>/<capture>_merged.ply.
+frame_dir: /data/pears/pears_original/A/tree_0_V_0000/marker_captures/depth  # Capture used for a single run.
+model_path: /data/marker_model/helios2DepthMarker.ply # Mesh of the physical calibration marker.
+model_units_to_m: 0.001                              # Scale applied to the marker mesh; 0.001 converts mm to m.
+
+# Frame range used only when marker_detection_sam3.py is run by itself.
+frames:
+  start: 0                                           # First frame ID to test, inclusive.
+  end: 11                                            # Last frame ID is excluded.
+
+# Each enabled view blocks processing until its window is closed.
+visualize_sam3: false                                # Show marker proposals, SAM masks, and model fits per frame.
+visualize_isolation: false                           # Show tree clusters, the selected tree, and any row split.
+visualize_reconstruction: false                      # Show the final rigidly registered frame clouds.
+
+# Batch reconstruction behavior
+overwrite: true                                      # Rebuild captures that already have a rigid output PLY.
+
+# SAM 3 mask generation and selection
+sam3:
+  multimask: true                                    # Request several masks for each centroid prompt.
+  min_prompt_cover: 0.30                             # Reject a mask covering less than this fraction of its source region.
+  max_area_ratio: 5.0                                # Reject a mask larger than this multiple of its source region.
+  max_regions_per_frame: 40                          # Maximum region prompts sent to SAM 3 for one frame.
+  save_step_images: false                            # Save the numbered marker-detection panels as PNG files.
+  step_images_dir: /data/pears_marker_reconstruction/marker_detection_steps  # Directory for those PNG files.
+
+# Rigid refinement after marker-based pose initialization
+pose_graph:
+  icp_voxel: 0.01                                    # Voxel size for ICP clouds, in metres; ICP radii scale from it.
+  icp_max_iter: 50                                   # Maximum iterations in each coarse and fine ICP pass.
+  icp_tukey_k_m: 0.0075                              # Tukey robust-loss width in metres; 0 disables robust weighting.
+  pair_neighbor_span: 3                              # Match frame pairs whose index difference is at most this value.
+  edge_min_fitness: 0.30                             # Reject an ICP edge below this matched-point fraction.
+  edge_max_rmse_m: 0.02                              # Reject an ICP edge above this inlier RMSE, in metres.
+  prune_threshold: 0.25                              # Open3D confidence threshold for pruning uncertain pose-graph edges.
+
+# Target-tree selection from the registered scene
+tree_isolation:
+  enabled: true                                      # Run tree selection before point filtering.
+  cluster_eps_m: 0.05                                # DBSCAN neighbor radius, in metres.
+  cluster_min_points: 50                             # DBSCAN minimum cluster size; smaller groups become noise.
+  min_cluster_frac: 0.1                              # Ignore clusters smaller than this fraction of the largest cluster.
+  split_fused_trees: true                            # Split a neighboring tree joined to the selected DBSCAN cluster.
+  split_gap_frac: 0.4                                # Accept a row-density valley below this fraction of the smaller peak.
+  split_min_lobe_frac: 0.15                          # Cancel a split if either side is smaller than this cluster fraction.
+
+# Simple multi-frame proximity filter. Used only when visibility_filter is off.
+support_filter:
+  enabled: false                                     # Enable radius-based cross-frame support filtering.
+  radius_m: 0.0075                                   # Search radius around each point, in metres.
+  min_frames: 2                                      # Number of distinct frame clouds required within the radius.
+
+# Free-space filter. This takes priority over support_filter when both are on.
+visibility_filter:
+  enabled: true                                      # Remove weakly supported points contradicted by depth images.
+  tol_m: 0.01                                        # Required free-space gap in front of observed depth, in metres.
+  min_contradictions: 3                              # Cameras that must see free space before a point can be removed.
+  min_confirmations: 2                               # Cameras confirming a point make it immune to contradictions.
+  confirm_radius_m: 0.0075                           # 3-D radius for a confirming observation, in metres.
+  pixel_margin: 2                                    # Use nearest depth within this +/- pixel window; 0 uses one pixel.
+  min_depth_m: 0.05                                  # Skip projections closer than this camera depth, in metres.
+
+# Remove the calibration marker and pole immediately after rigid registration.
+# All later isolation, filtering, and non-rigid stages use the cleaned clouds. A
+# separate full-scene PLY is also written before isolation and filtering.
+marker_removal:
+  enabled: true                                      # Clean all later stages and write *_merged_marker_removed.ply.
+  panel_padding_m: 0.03                              # Expand the marker-mesh bounding box by this distance, in metres.
+  pole_length_m: 1.20                                # Remove this far below the marker's lower edge, in metres.
+  pole_radius_m: 0.06                                # Radius of the removed pole column, in metres.
+
+# Optional deformation of branch tips after rigid registration. The rigid output
+# is written first. The deformed clouds use the same isolation and filtering code
+# and are saved with the *_merged_nonrigid stem.
+non_rigid:
+  enabled: true                                      # Produce the additional non-rigid reconstruction.
+  work_voxel_m: 0.018                                # Voxel size of the downsampled clouds used by the solver, in metres.
+  node_spacing_m: 0.08                               # Voxel spacing of deformation control nodes, in metres.
+  blend_nodes: 4                                     # Nearest control nodes blended to move each point.
+  graph_neighbors: 6                                 # Nearest control nodes connected by smoothness constraints.
+  static_support_radius_m: 0.012                     # Cross-frame match radius used to identify stable nodes, in metres.
+  static_support_frames: 3                           # Other frames required for a node to receive full static support.
+  shape_radius_m: 0.075                              # Neighborhood radius for linearity and density estimates, in metres.
+  linearity_start: 0.50                              # Local linearity where branch-tip mobility begins.
+  linearity_full: 0.80                               # Local linearity where the shape term reaches full mobility.
+  density_full_below: 35                             # Neighborhood count at or below which density allows full mobility.
+  density_zero_above: 75                             # Neighborhood count at or above which density blocks movement.
+  correspondence_radii_m: [0.12, 0.12, 0.08, 0.08, 0.05, 0.05, 0.035, 0.035]  # Search radius for each solver pass, coarse to fine.
+  min_consensus_frames: 2                            # Other frames required to define a target position.
+  max_consensus_spread_fraction: 0.70                # Reject targets whose spread exceeds this fraction of the pass radius.
+  min_point_mobility: 0.03                           # Ignore points with mobility at or below this value.
+  data_weight: 4.0                                   # Weight of point-to-consensus constraints.
+  smoothness: 0.15                                   # Weight that keeps neighboring node displacements similar.
+  tip_magnitude: 0.005                               # Base penalty on control-node displacement magnitude.
+  static_anchor: 120.0                               # Additional displacement penalty for low-mobility nodes.
+  bottom_anchor_fraction: 0.20                       # Fix nodes in this lowest fraction of scene height.
+  max_tip_displacement_m: 0.08                       # Maximum node motion in metres, scaled by node mobility.

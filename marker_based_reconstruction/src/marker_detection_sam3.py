@@ -11,18 +11,22 @@ Override the service address with the SAM3_URL env var if needed.
 
 import os
 import re
+import sys
 from pathlib import Path
+
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2
 import numpy as np
 import open3d as o3d
 import yaml
 
-import config
-import depth_regions as dr
-import marker_registration as reg
-import sam3_client
-import viz_utils as vz
+import marker_based_reconstruction.src.config as config
+import marker_based_reconstruction.src.depth_regions as dr
+import marker_based_reconstruction.src.marker_registration as reg
+import marker_based_reconstruction.src.sam3_client as sam3_client
+import marker_based_reconstruction.src.viz_utils as vz
 
 
 # ===========================================================================

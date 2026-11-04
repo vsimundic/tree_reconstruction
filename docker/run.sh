@@ -8,9 +8,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-IMAGE_NAME="pear/pear-tree-pruning"
+IMAGE_NAME="tree_reconstruction"
 IMAGE_TAG="latest"
-CONTAINER_NAME="pear-tree-pruning"
+CONTAINER_NAME="tree_reconstruction"
 
 echo "============================================="
 echo "  Running container: ${CONTAINER_NAME}"
@@ -32,5 +32,6 @@ docker run -it \
     --env DISPLAY="${DISPLAY}" \
     --env QT_X11_NO_MITSHM=1 \
     --volume /tmp/.X11-unix:/tmp/.X11-unix \
+    --volume /home/robot/projects/BRANCH/data:/data \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
     /bin/bash

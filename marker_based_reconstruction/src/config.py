@@ -1,7 +1,8 @@
 """Runtime configuration loaded once from YAML into a nested SimpleNamespace.
 
-The source is cfg/default.yaml, or the path in the TREE_CFG env var. Usage:
-    import config
+The source is cfg/marker_based_reconstruction.yaml, or the path in the TREE_CFG
+environment variable. Usage:
+    import marker_based_reconstruction.src.config as config
     config.CFG.pose_graph.icp_voxel
 """
 
@@ -10,8 +11,9 @@ from types import SimpleNamespace
 
 import yaml
 
-CFG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cfg")
-DEFAULT_CFG = os.path.join(CFG_DIR, "default.yaml")
+PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CFG_DIR = os.path.join(PACKAGE_DIR, "cfg")
+DEFAULT_CFG = os.path.join(CFG_DIR, "marker_based_reconstruction.yaml")
 
 
 def _namespacify(obj):

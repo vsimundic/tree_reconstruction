@@ -15,6 +15,14 @@ global pose in the reference camera's frame:
 
 import glob
 import os
+import sys
+from pathlib import Path
+
+# When this file is executed by path, Python puts ``src`` first on sys.path.
+# Because this file has the same name as the top-level package, it would then be
+# imported as ``marker_based_reconstruction`` and shadow the actual package.
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import cv2
 import numpy as np
@@ -23,17 +31,19 @@ from scipy.ndimage import gaussian_filter1d, minimum_filter
 from scipy.signal import find_peaks
 from scipy.spatial import cKDTree
 
-import config
-import depth_regions as dr
-import marker_detection_sam3 as m
-import marker_registration as reg
-import viz_utils as vz
+import marker_based_reconstruction.src.config as config
+import marker_based_reconstruction.src.depth_regions as dr
+import marker_based_reconstruction.src.marker_detection_sam3 as m
+import marker_based_reconstruction.src.marker_registration as reg
+import marker_based_reconstruction.src.non_rigid_refinement as nr
+import marker_based_reconstruction.src.viz_utils as vz
 
 # Pipeline knobs from cfg/default.yaml (see config.py).
 _PG = config.CFG.pose_graph
 _TI = config.CFG.tree_isolation
 _SF = config.CFG.support_filter
 _VF = config.CFG.visibility_filter
+_MR = getattr(config.CFG, "marker_removal", None)
 
 # pairwise point-to-plane ICP (pose-graph edges)
 ICP_VOXEL = _PG.icp_voxel               # downsample resolution (m)
@@ -292,6 +302,68 @@ def merge_clouds(clouds):
     for pcd in clouds.values():
         merged += pcd
     return merged
+
+
+def remove_marker_and_pole(clouds, detections, final_poses):
+    """Return copies of the registered frame clouds with the marker and its pole removed.
+
+    The removal mask is evaluated in marker-model coordinates. It is the union of
+    a padded marker-mesh box and a narrow column extending down from the panel.
+    Marker poses from every accepted frame are used so small pose differences do
+    not leave duplicate marker surfaces behind.
+    """
+    if not clouds or not detections or not final_poses:
+        return clouds.copy(), 0
+
+    mesh = o3d.io.read_triangle_mesh(config.CFG.model_path)
+    vertices = np.asarray(mesh.vertices, dtype=np.float64) * config.CFG.model_units_to_m
+    if not len(vertices):
+        raise ValueError(f"marker model has no vertices: {config.CFG.model_path}")
+    model_min = vertices.min(axis=0)
+    model_max = vertices.max(axis=0)
+    panel_pad = _MR.panel_padding_m
+
+    up = _camera_up(final_poses, list(clouds))
+    marker_poses = [
+        np.asarray(final_poses[fid]) @ np.asarray(detections[fid]["T_marker_cam"])
+        for fid in clouds if fid in detections and fid in final_poses]
+
+    output = {}
+    removed_count = 0
+    for fid, cloud in clouds.items():
+        points = np.asarray(cloud.points)
+        remove = np.zeros(len(points), dtype=bool)
+        for T_marker_ref in marker_poses:
+            T_ref_marker = invert_rigid_transform(T_marker_ref)
+            local = points @ T_ref_marker[:3, :3].T + T_ref_marker[:3, 3]
+
+            panel = np.all(
+                (local >= model_min - panel_pad) &
+                (local <= model_max + panel_pad), axis=1)
+
+            # Marker relief is along local Z. Of the two panel axes (X/Y), use
+            # the one aligned with scene up; the pole extends below that edge.
+            up_in_marker = T_marker_ref[:3, :3].T @ up
+            vertical_axis = int(np.argmax(np.abs(up_in_marker[:2])))
+            horizontal_axis = 1 - vertical_axis
+            vertical = local[:, vertical_axis]
+            if up_in_marker[vertical_axis] >= 0:
+                along_pole = ((vertical >= model_min[vertical_axis] - _MR.pole_length_m)
+                              & (vertical <= model_min[vertical_axis] + panel_pad))
+            else:
+                along_pole = ((vertical >= model_max[vertical_axis] - panel_pad)
+                              & (vertical <= model_max[vertical_axis] + _MR.pole_length_m))
+
+            horizontal_center = 0.5 * (
+                model_min[horizontal_axis] + model_max[horizontal_axis])
+            pole_radius_sq = ((local[:, horizontal_axis] - horizontal_center) ** 2
+                              + (local[:, 2] - model_min[2]) ** 2)
+            pole = along_pole & (pole_radius_sq <= _MR.pole_radius_m ** 2)
+            remove |= panel | pole
+
+        output[fid] = cloud.select_by_index(np.flatnonzero(~remove))
+        removed_count += int(remove.sum())
+    return output, removed_count
 
 
 def _camera_up(final_poses, frame_ids):
@@ -636,14 +708,14 @@ def save_frame_poses(clouds, detections, final_poses, out_path):
 
 
 def save_reconstruction(frame_dir, clouds, detections=None, final_poses=None,
-                        visualize_isolation=False):
+                        visualize_isolation=False, out_path=None):
     """Isolate the target tree, filter the merged cloud, and write it plus
     sidecars (frames manifest, poses). Before-state snapshots are also written:
     the full multi-tree scene as *_scene.ply when isolation drops anything, and
     the isolated-but-unfiltered merge as *_prefilter.ply when a filter runs. The
     visibility filter takes precedence over the support filter when both are
     enabled and needs the per-frame depth maps + poses. Returns the main .ply path."""
-    out_path = output_path_for(frame_dir)
+    out_path = out_path or output_path_for(frame_dir)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     stem = os.path.splitext(out_path)[0]
     scene_path = stem + "_scene.ply"
@@ -697,6 +769,39 @@ def save_reconstruction(frame_dir, clouds, detections=None, final_poses=None,
     return out_path
 
 
+def save_non_rigid_displacements(result, out_path):
+    """Save full-scene non-rigid displacement and mobility arrays by frame."""
+    frame_ids = list(result["displacements"])
+    counts = np.array([len(result["displacements"][fid]) for fid in frame_ids])
+    offsets = np.r_[0, np.cumsum(counts)]
+    vectors = np.concatenate([result["displacements"][fid] for fid in frame_ids], axis=0)
+    mobility = np.concatenate([result["mobility"][fid] for fid in frame_ids])
+    path = os.path.splitext(out_path)[0] + "_displacements.npz"
+    np.savez_compressed(
+        path,
+        frame_ids=np.asarray(frame_ids),
+        frame_offsets=offsets,
+        displacement_vectors_m=vectors,
+        displacement_m=np.linalg.norm(vectors, axis=1),
+        branch_tip_mobility=mobility)
+    print(f"saved non-rigid displacements -> {path}")
+    return path
+
+
+def save_marker_removed_scene(frame_dir, cleaned_clouds, detections, final_poses,
+                              rigid_path, removed_count):
+    """Write the cleaned full rigid scene before isolation and filtering."""
+    out_path = os.path.splitext(rigid_path)[0] + "_marker_removed.ply"
+    scene = merge_clouds(cleaned_clouds)
+    if not o3d.io.write_point_cloud(out_path, scene):
+        raise OSError(f"failed to write marker-removed scene: {out_path}")
+    save_frame_manifest(frame_dir, cleaned_clouds, out_path)
+    save_frame_poses(cleaned_clouds, detections, final_poses, out_path)
+    print(f"saved marker-removed scene ({removed_count} points removed, "
+          f"{len(scene.points)} kept) -> {out_path}")
+    return out_path
+
+
 def reconstruct_capture(frame_dir, visualize_sam3=False, visualize_reconstruction=False,
                         visualize_isolation=False):
     """Reconstruct one capture (a .../marker_captures/depth directory): detect the
@@ -711,8 +816,26 @@ def reconstruct_capture(frame_dir, visualize_sam3=False, visualize_reconstructio
     ref_id, clouds, final_poses = register_to_reference(detections)
     print(f"registered {len(clouds)}/{len(frame_ids)} frames to frame {ref_id}")
 
+    out_path = output_path_for(frame_dir)
+    if _MR is not None and _MR.enabled:
+        clouds, removed_count = remove_marker_and_pole(clouds, detections, final_poses)
+        save_marker_removed_scene(
+            frame_dir, clouds, detections, final_poses, out_path, removed_count)
+
     out_path = save_reconstruction(frame_dir, clouds, detections, final_poses,
-                                   visualize_isolation=visualize_isolation)
+                                   visualize_isolation=visualize_isolation,
+                                   out_path=out_path)
+
+    non_rigid_cfg = getattr(config.CFG, "non_rigid", None)
+    if non_rigid_cfg is not None and non_rigid_cfg.enabled:
+        print("running non-rigid branch-tip refinement")
+        settings = nr.settings_from_config(non_rigid_cfg)
+        refined_clouds, result = nr.refine_clouds(clouds, final_poses, settings)
+        non_rigid_path = os.path.splitext(out_path)[0] + "_nonrigid.ply"
+        save_reconstruction(
+            frame_dir, refined_clouds, detections, final_poses,
+            visualize_isolation=False, out_path=non_rigid_path)
+        save_non_rigid_displacements(result, non_rigid_path)
 
     if visualize_reconstruction:
         geoms = [vz.coord_frame(0.15)] + list(clouds.values())

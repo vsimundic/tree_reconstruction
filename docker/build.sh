@@ -7,7 +7,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-IMAGE_NAME="pear/pear-tree-pruning"
+IMAGE_NAME="tree_reconstruction"
 IMAGE_TAG="latest"
 
 echo "============================================="

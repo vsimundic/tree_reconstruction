@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d
 
-import viz_utils as vz
+import marker_based_reconstruction.src.viz_utils as vz
 
 
 # ---------------------------------------------------------------------------

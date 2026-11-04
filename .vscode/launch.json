@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Marker reconstruction: single capture",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "marker_based_reconstruction.src.marker_based_reconstruction",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Marker reconstruction: dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "marker_based_reconstruction.src.reconstruct_dataset",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

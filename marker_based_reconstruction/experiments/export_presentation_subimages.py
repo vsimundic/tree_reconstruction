@@ -19,8 +19,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-import depth_regions as dr
-import marker_detection_sam3 as marker_detector
+import marker_based_reconstruction.src.depth_regions as dr
+import marker_based_reconstruction.src.marker_detection_sam3 as marker_detector
 
 
 # ---------------------------------------------------------------------------
