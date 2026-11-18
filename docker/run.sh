@@ -32,6 +32,6 @@ docker run -it \
     --env DISPLAY="${DISPLAY}" \
     --env QT_X11_NO_MITSHM=1 \
     --volume /tmp/.X11-unix:/tmp/.X11-unix \
-    --volume /home/robot/projects/BRANCH/data:/data \
+    --volume /media/simundic/T9/pears_dataset:/data \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
     /bin/bash

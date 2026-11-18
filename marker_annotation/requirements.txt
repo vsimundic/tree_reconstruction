@@ -1,0 +1,6 @@
+# PySide6 6.12.0 wheels corrupt None/bool refcounts on Python 3.10/3.11.
+# https://qt-project.atlassian.net/browse/PYSIDE-3474
+PySide6==6.11.2
+numpy>=1.24
+opencv-python-headless>=4.8
+PyYAML>=6

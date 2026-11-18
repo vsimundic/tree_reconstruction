@@ -24,6 +24,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libxt6 \
     x11-apps \
+    libxkbcommon-x11-0 \
+    libxcb-cursor0 \
+    libxcb-icccm4 \
+    libxcb-keysyms1 \
+    libxcb-shape0 \
+    libxcb-xinerama0 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libdbus-1-3 \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
@@ -42,6 +52,12 @@ RUN pip install --no-cache-dir \
     tqdm \
     pandas \
     plyfile
+
+# Share the annotation dependency list with local installations.
+# Existing opencv-python supplies cv2; avoid installing a second OpenCV wheel.
+COPY marker_annotation/requirements.txt /tmp/annotation-requirements.txt
+RUN sed '/^[Oo][Pp][Ee][Nn][Cc][Vv]-python-headless/d' /tmp/annotation-requirements.txt > /tmp/annotation-gui-requirements.txt \
+    && pip install --no-cache-dir -r /tmp/annotation-gui-requirements.txt
 
 # Set working directory
 WORKDIR /workspace
