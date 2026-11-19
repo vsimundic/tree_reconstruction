@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QPushButton, QFileDialog, QComboBox, QLabel, QLineEdit, QPlainTextEdit,
-    QSplitter, QMessageBox, QCheckBox, QDialog)
+    QSplitter, QMessageBox, QCheckBox, QDialog, QSlider)
 from . import data, state
 from .pose import estimate, depth_check
 from .viewer import Viewer
@@ -39,6 +39,15 @@ class Window(QMainWindow):
         self.diagram = MarkerDiagram()
         self.viewer = Viewer()
         self.overlay = QCheckBox('Projected CAD'); self.overlay.setChecked(True)
+        self.marker_alpha = QSlider(Qt.Horizontal); self.marker_alpha.setRange(0,100); self.marker_alpha.setValue(45)
+        self.pose_alpha = QSlider(Qt.Horizontal); self.pose_alpha.setRange(0,100); self.pose_alpha.setValue(35)
+        self.marker_alpha.setToolTip('Opacity of clicked circles and IDs: left hides them, right makes them solid.')
+        self.pose_alpha.setToolTip('Opacity of the estimated CAD overlay and residual lines.')
+        self.marker_alpha.setAccessibleName('Marker opacity'); self.pose_alpha.setAccessibleName('Pose overlay opacity')
+        self.marker_alpha_label = QLabel('45%'); self.pose_alpha_label = QLabel('35%')
+        self.auto_estimate = QCheckBox('Auto estimate')
+        self.auto_estimate.setToolTip('Re-estimate after edits when enough usable corners are available. Only unambiguous automatic fits are projected; acceptance stays manual.')
+        self.auto_status = QLabel(); self.auto_status.setObjectName('muted'); self.auto_status.setWordWrap(True); self.auto_status.hide()
         self.aligned = QCheckBox('Confirmed pixel alignment')
         self.scale = QLineEdit(); self.scale.setPlaceholderText('Confirmed axial depth m/unit (optional)')
         self.reviewer = QLineEdit(reviewer); self.reviewer.setPlaceholderText('Reviewer identifier')
@@ -57,9 +66,15 @@ class Window(QMainWindow):
         self.scope_label = QLabel('No images loaded'); self.scope_label.setObjectName('muted'); self.scope_label.setWordWrap(True)
         ll.addWidget(self.scope_label); ll.addWidget(self.frames, 1); split.addWidget(left)
         middle = QWidget(); ml = QVBoxLayout(middle); ml.setContentsMargins(0,0,0,0)
-        row = QHBoxLayout(); row.addWidget(self.modality); row.addWidget(self.overlay)
+        row = QHBoxLayout(); row.addWidget(self.modality); row.addWidget(self.overlay); row.addWidget(self.auto_estimate)
         fit = QPushButton('Fit image'); fit.clicked.connect(self.viewer.fit); row.addWidget(fit)
-        ml.addLayout(row); ml.addWidget(self.viewer, 1); split.addWidget(middle)
+        ml.addLayout(row)
+        alpha_row = QHBoxLayout()
+        for title,slider,value in [('Markers',self.marker_alpha,self.marker_alpha_label),
+                                   ('Pose overlay',self.pose_alpha,self.pose_alpha_label)]:
+            alpha_row.addWidget(QLabel(title)); alpha_row.addWidget(slider,1)
+            value.setFixedWidth(36); alpha_row.addWidget(value)
+        ml.addLayout(alpha_row); ml.addWidget(self.auto_status); ml.addWidget(self.viewer, 1); split.addWidget(middle)
         right = QWidget(); rl = QVBoxLayout(right); rl.setContentsMargins(8,0,0,0)
         corner_title = QLabel('Marker corners'); corner_title.setObjectName('sectionTitle')
         for widget in [corner_title, self.diagram, self.corners,
@@ -84,11 +99,17 @@ class Window(QMainWindow):
         self.diagram.corner_selected.connect(self.diagram_click)
         self.diagram.orientation_changed.connect(self.save_diagram_view)
         self.modality.currentTextChanged.connect(self.redraw)
+        self.modality.currentTextChanged.connect(self.queue_auto_estimate)
+        self.auto_estimate.toggled.connect(self.auto_estimate_toggled)
         self.overlay.toggled.connect(self.redraw)
+        self.marker_alpha.valueChanged.connect(self.appearance_changed)
+        self.pose_alpha.valueChanged.connect(self.appearance_changed)
         self.aligned.toggled.connect(self.conventions_changed)
         self.scale.editingFinished.connect(self.conventions_changed)
         self.reviewer.textEdited.connect(self.metadata); self.note.textEdited.connect(self.metadata)
         self.timer = QTimer(self); self.timer.setSingleShot(True); self.timer.timeout.connect(self.persist)
+        self.auto_timer = QTimer(self); self.auto_timer.setSingleShot(True); self.auto_timer.setInterval(250)
+        self.auto_timer.timeout.connect(self.estimate_automatically)
         self.statusBar().showMessage('Open a dataset and load a corner geometry JSON. Wheel: zoom · drag: pan · Shift-drag: relocate')
         if profile == 'pears':
             geometry = geometry or str(Path(__file__).with_name('helios_corners.json'))
@@ -120,6 +141,7 @@ class Window(QMainWindow):
             self.close()
 
     def load_dataset(self, root, folder_filters=None):
+        self.auto_timer.stop()
         self.h = None
         root = str(Path(root).resolve())
         if folder_filters is not None:
@@ -179,7 +201,7 @@ class Window(QMainWindow):
             self.h = self.histories.setdefault(r['id'], state.History(r))
             self.session['last_frame'] = key
             self.note.setText(self.h.value['note']); self.reviewer.setText(self.h.value['reviewer'])
-            self.redraw(); self.viewer.fit()
+            self.redraw(); self.viewer.fit(); self.queue_auto_estimate()
         except Exception as e: self.error(e)
 
     def selected(self):
@@ -190,6 +212,14 @@ class Window(QMainWindow):
         if self.g:
             self.diagram.set_selection(self.selected(), self.h.value['observations'] if self.h else {})
         self.redraw()
+
+    def appearance_changed(self, *_):
+        markers, pose = self.marker_alpha.value(), self.pose_alpha.value()
+        self.viewer.marker_opacity = markers/100
+        self.viewer.overlay_opacity = pose/100
+        self.marker_alpha_label.setText(f'{markers}%'); self.pose_alpha_label.setText(f'{pose}%')
+        self.session['image_opacity'] = dict(markers=markers, pose=pose)
+        self.redraw(); self.timer.start(350)
 
     def save_diagram_view(self, rotation, mirrored):
         self.session['diagram_view'] = dict(rotation=rotation, mirrored=mirrored)
@@ -226,12 +256,13 @@ class Window(QMainWindow):
         if self.h:
             self.h.value.update(reviewer=self.reviewer.text(), note=self.note.text()); self.timer.start(350)
 
-    def changed(self):
+    def changed(self, schedule_auto=True):
         if self.h:
             self.session['records'] = [self.h.value if r['id']==self.h.value['id'] else r for r in self.session['records']]
             row = self.frames.currentRow()
             self.frames.item(row).setText(str(self.paths[row].relative_to(self.session['capture_root']))+' · '+self.h.value['status'])
         self.redraw(); self.timer.start(350)
+        if schedule_auto: self.queue_auto_estimate()
 
     def redraw(self, *_):
         if not self.h: return
@@ -248,7 +279,9 @@ class Window(QMainWindow):
             shown = {k:o for k,o in obs.items() if state.click_status(o)=='clicked'
                      and (self.aligned.isChecked() or o.get('modality')==mode)}
             pose = self.h.value['pose']; projected = None
-            if pose and self.g and self.overlay.isChecked() and (pose['modality']==mode or self.aligned.isChecked()):
+            if (pose and self.g and self.overlay.isChecked()
+                    and not (pose.get('source')=='automatic' and pose['ambiguous'])
+                    and (pose['modality']==mode or self.aligned.isChecked())):
                 points = np.array([c['xyz'] for c in self.g['corners'].values()], float)
                 uv = cv2.projectPoints(points, np.array(pose['rvec']), np.array(pose['tvec_m']), np.array(self.cal['k']).reshape(3,3), np.array(self.cal['d']))[0].reshape(-1,2)
                 projected = dict(zip(self.keys, uv.tolist()))
@@ -267,12 +300,54 @@ class Window(QMainWindow):
                 self.diagram.set_selection(self.selected(), obs)
         except Exception as e: self.report.setPlainText(str(e))
 
+    def fit_pose(self):
+        scale = float(self.scale.text()) if self.scale.text() else None
+        if scale is not None and (not np.isfinite(scale) or scale <= 0):
+            raise ValueError('Depth scale must be positive and finite.')
+        return estimate(self.g, self.h.value['observations'], self.cal,
+                        self.modality.currentText(), self.aligned.isChecked(), self.depth, scale)
+
+    def auto_estimate_toggled(self, enabled):
+        self.session['auto_estimate_enabled'] = enabled
+        self.auto_status.setVisible(enabled)
+        self.timer.start(350)
+        self.queue_auto_estimate()
+
+    def queue_auto_estimate(self, *_):
+        self.auto_timer.stop()
+        if not self.auto_estimate.isChecked(): return
+        self.auto_status.setText('Auto estimate: waiting for usable corners…')
+        self.auto_timer.start()
+
+    def estimate_automatically(self):
+        if not self.auto_estimate.isChecked(): return
+        if not self.h or not self.g:
+            self.auto_status.setText('Auto estimate: load images and marker geometry.')
+            return
+        if self.h.value['status'] in ('accepted','ambiguous'):
+            self.auto_status.setText('Auto estimate: reviewed frame; edit a click to estimate again.')
+            return
+        pose = self.h.value['pose']
+        if pose and (pose['modality']==self.modality.currentText() or self.aligned.isChecked()):
+            self.auto_status.setText('Auto estimate: competing solutions; add another visible corner.' if pose['ambiguous']
+                                     else f"Pose ready · RMSE {pose['rmse_px']:.3f} px · review and accept manually")
+            return
+        try:
+            pose = self.fit_pose()
+            pose['source'] = 'automatic'
+            self.h.value['pose'] = pose
+            self.auto_status.setText('Auto estimate: competing solutions; add another visible corner.' if pose['ambiguous']
+                                     else f"Pose ready · RMSE {pose['rmse_px']:.3f} px · review and accept manually")
+            self.changed(schedule_auto=False)
+        except (ValueError, cv2.error) as e:
+            self.auto_status.setText('Auto estimate: ' + str(e))
+
     def solve(self):
         if not self.h or not self.g: self.error('Load images and a geometry JSON first.'); return
         try:
-            scale = float(self.scale.text()) if self.scale.text() else None
-            if scale is not None and scale <= 0: raise ValueError('Depth scale must be positive.')
-            self.h.value['pose'] = estimate(self.g, self.h.value['observations'], self.cal, self.modality.currentText(), self.aligned.isChecked(), self.depth, scale)
+            self.auto_timer.stop()
+            self.h.value['pose'] = self.fit_pose()
+            self.h.value['pose']['source'] = 'manual'
             self.h.value['status'] = 'annotated'; self.changed()
         except Exception as e: self.error(e)
 
@@ -320,6 +395,15 @@ class Window(QMainWindow):
                 self.diagram.set_geometry(self.g)
                 for k,c in self.g['corners'].items(): self.corners.addItem(c['group']+' / '+k)
                 self.corners.setCurrentRow(0)
+            opacity = restored.get('image_opacity', {})
+            for slider,key,default in [(self.marker_alpha,'markers',45),(self.pose_alpha,'pose',35)]:
+                slider.blockSignals(True); slider.setValue(opacity.get(key,default)); slider.blockSignals(False)
+            self.appearance_changed()
+            self.auto_timer.stop()
+            self.auto_estimate.blockSignals(True)
+            self.auto_estimate.setChecked(restored.get('auto_estimate_enabled',False))
+            self.auto_estimate.blockSignals(False)
+            self.auto_status.setVisible(self.auto_estimate.isChecked())
             view = restored.get('diagram_view', {})
             self.diagram.blockSignals(True)
             self.diagram.set_orientation(view.get('rotation',0),view.get('mirrored',False))
@@ -341,7 +425,7 @@ class Window(QMainWindow):
             except Exception as e: self.error(e)
 
     def closeEvent(self, event):
-        self.timer.stop()
+        self.timer.stop(); self.auto_timer.stop()
         if not self._skip_save: self.persist()
         event.accept()
 

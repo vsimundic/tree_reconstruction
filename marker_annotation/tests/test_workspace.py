@@ -101,3 +101,43 @@ def test_visible_clicks_only_delete_and_restore(tmp_path):
     restored.click(40,50)
     assert state.click_status(restored.h.value['observations']['P1']) == 'clicked'
     restored.close()
+
+
+def test_and_or_folder_filters_from_dataset_root(tmp_path):
+    from marker_annotation.data import parse_folder_filters
+    import pytest
+    for side in ['A','B','C']:
+        for kind in ['marker_captures','tree_captures']:
+            path = tmp_path/side/'tree_0'/kind/'depth/0_intensity.png'
+            path.parent.mkdir(parents=True); path.touch()
+    only_a = data.discover(tmp_path,['A; marker_captures'])
+    assert len(only_a)==1 and only_a[0].relative_to(tmp_path).parts[0]=='A'
+    assert data.discover(tmp_path,['marker_captures; A']) == only_a
+    assert len(data.discover(tmp_path,['A,B; marker_captures']))==2
+    assert len(data.discover(tmp_path,['marker_captures']))==3
+    assert len(data.discover(tmp_path,['A','B']))==4  # legacy list stays OR
+    assert len(data.discover(tmp_path,[]))==6
+    assert data.discover(tmp_path,['A; marker_capture'])==[]
+    for invalid in ['A;; marker_captures','A;','A/B; marker_captures','A,; marker_captures']:
+        with pytest.raises(ValueError): parse_folder_filters(invalid)
+
+
+def test_compound_filter_remembered_and_session_restored(tmp_path):
+    app = qt_app()
+    for side in ['A','B']:
+        generate(tmp_path/'dataset'/side/'marker_captures')
+    preferences = tmp_path/'preferences.json'
+    d = StartDialog(preferences_path=preferences)
+    d.root.setText(str(tmp_path/'dataset')); d.filters.setText('A; marker_captures')
+    d.session.setText(str(tmp_path/'session.json'))
+    d.open_workspace()
+    assert d.result()==QDialog.Accepted
+    again = StartDialog(preferences_path=preferences)
+    assert again.filters.text()=='A; marker_captures'
+    w = Window(**d.values)
+    assert len(w.paths)==3 and all(p.relative_to(tmp_path/'dataset').parts[0]=='A' for p in w.paths)
+    w.close()
+    restored = Window(session=str(tmp_path/'session.json'))
+    assert restored.folder_filters==['A; marker_captures']
+    assert len(restored.paths)==3
+    restored.close(); again.close()

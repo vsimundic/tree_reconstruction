@@ -11,9 +11,9 @@ pip install -r marker_annotation/requirements.txt
 python -m marker_annotation
 ```
 
-The start screen provides folder and session browsing, a marker profile or custom geometry, a folder filter, and a reviewer ID. These choices are remembered in `annotation_sessions/preferences.json` in the repository, including inside Docker. **Workspace…** reopens setup. An existing session restores its saved geometry and conventions; the folder and filter select the visible frames.
+The start screen provides folder and session browsing, a marker profile or custom geometry, a folder filter, and a reviewer ID. These choices are remembered in `annotation_sessions/preferences.json` in the repository, including inside Docker. **Workspace…** reopens setup. An existing session restores its saved geometry and conventions; the dataset folder and filter select the visible frames.
 
-Choose a capture directory directly to work on it alone. To restrict a dataset to marker images, enter `marker_captures` in **Include folder names**. Comma-separated names include either folder; an empty filter includes everything. Names match exactly against image parent directories, including ancestors, so selecting `marker_captures/depth` directly also works. This only changes the displayed frame list; existing records outside it remain saved. The last frame is restored when reopening a session.
+Set **Dataset folder** to the dataset root, e.g. `/data/pears_original`. In **Include folder names**, use `A; marker_captures` for only marker captures below A. A semicolon requires both groups to match (AND); a comma allows either name within one group (OR). For example, `A,B; marker_captures` includes marker captures from either A or B. `marker_captures` alone includes them from all sides; an empty filter includes everything. Names match exact directory components recursively, and the order of semicolon groups does not matter. Existing comma-separated preferences retain their OR meaning. Filtering only changes the displayed frame list; other records remain saved. The last frame is restored when reopening a session.
 
 The session file is atomically autosaved after edits and on navigation/close. Reuse `--session` or Restore session to resume. JSON export includes all independent records; CSV summarizes their review status and fit. Keep the session on a writable local filesystem. Image data are never rewritten.
 
@@ -76,6 +76,9 @@ Select a corner in the diagram or list, click it, estimate, inspect residuals, t
 - Delete: remove click; Ctrl+Z / Ctrl+Shift+Z: undo/redo observation edits.
 - Left/Right: previous/next frame; Up/Down in corner list: select corner.
 - E: estimate; A: accept. Text entry retains normal text editing shortcuts.
+- **Auto estimate** (above the image) optionally fits the pose after edits, with a short delay while dragging. It waits for enough usable corners, reports ambiguous/degenerate configurations inline, and projects only unambiguous automatic fits. The toggle is saved in the session. Acceptance remains manual; reviewed frames are left alone until edited. Turning it off stops automatic recomputation; **Projected CAD** independently hides the current projection.
+- **Markers** and **Pose overlay** sliders above the image adjust opacity independently from 0% (hidden) to 100% (solid), and are remembered in the session. They change only rendering, without changing clicks, fitted poses, or acceptance.
+- Image clicks use small translucent circles and labels. Projected CAD edges/corners and residual lines are faint so the original image stays visible.
 - Corners are either clicked or unmarked. Delete removes a click; undo restores it.
 - Diagram: use −90° / +90°, type any clockwise angle, toggle Mirror (left/right after rotation), or Reset. Orientation is remembered in the session and applies to the whole diagram. This affects only the diagram; IDs, CAD coordinates, image clicks, poses, and acceptance are unchanged.
 

@@ -137,14 +137,15 @@ Inside the container, start the desktop application with:
 python -m marker_annotation
 ```
 
-The start screen lets you browse for an image folder and session file, choose the
+The start screen lets you browse for a dataset folder and session file, choose the
 marker profile, and enter your reviewer ID. Choices are remembered and preselected
 on the next launch. Existing sessions resume saved annotations and the last frame.
 
-Choose a capture folder to work on it alone. To use only marker captures across
-a dataset, choose `/data/pears_original` and enter `marker_captures` in **Include
-folder names**. Leave it blank for all folders, or separate folder names with
-commas. Names match exactly; this dataset uses `marker_captures` (plural).
+Set **Dataset folder** to `/data/pears_original`. In **Include folder names**,
+use `A; marker_captures` for only marker captures from side A. Semicolons mean
+AND; commas mean OR within a group: `A,B; marker_captures` includes marker
+captures from either side. Leave the filter blank for all frames. Folder names
+match exactly; this dataset uses `marker_captures` (plural).
 Change these settings later with **Workspace…**. Filters hide frames without
 deleting saved records. Preferences live in `annotation_sessions/preferences.json`
 on the host-mounted repository.

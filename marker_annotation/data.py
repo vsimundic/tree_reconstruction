@@ -6,11 +6,27 @@ import numpy as np
 import yaml
 
 
+def parse_folder_filters(filters):
+    """Semicolons require every group; commas allow alternatives within a group.
+
+    Legacy lists keep their original OR semantics when joined with commas.
+    """
+    expression = filters if isinstance(filters,str) else ', '.join(filters)
+    if not expression.strip(): return []
+    groups = []
+    for group in expression.split(';'):
+        names = [name.strip() for name in group.split(',')]
+        if any(not name or name in ('.','..') or '/' in name or '\\' in name for name in names):
+            raise ValueError('Use folder names separated by ; (AND) or , (OR), e.g. A; marker_captures. Do not enter paths or empty groups.')
+        groups.append(set(names))
+    return groups
+
+
 def discover(root, folder_filters=()):
     root = Path(root)
-    names = set(folder_filters)
+    groups = parse_folder_filters(folder_filters)
     return sorted(p for p in root.rglob('*_intensity.png')
-                  if not names or names.intersection(p.parent.parts))
+                  if all(group.intersection(p.parent.parts) for group in groups))
 
 
 def read_frame(path):
